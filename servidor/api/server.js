@@ -17,7 +17,7 @@ app.use(express.json());
 app.get("/healthz", async (req, res) => {
   try {
     await pool.query("SELECT 1");
-    res.send("uwu");
+    res.send("ok");
   } catch {
     res.status(500).send("db_error");
   }
