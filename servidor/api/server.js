@@ -29,7 +29,7 @@ function calcularMetaDiariaMl(pesoKg) {
   return Math.round(n * 35);
 }
 
-app.post("/api/registro", async (req, res) => {
+app.post("/api/register", async (req, res) => {
   try {
     const { nombre, correo, password, sexo, edad, peso_kg } = req.body;
 
@@ -87,6 +87,22 @@ app.get("/api/admin/users", async (req, res) => {
   } catch (err) {
     console.error("LIST users error:", err);
     res.status(500).json({ error: "Error listando usuarios" });
+  }
+});
+
+app.get("/api/admin/users/stats", async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(*)::int AS total_users,
+        ROUND(AVG(peso_kg)::numeric, 1) AS avg_peso_kg,
+        ROUND(AVG(meta_diaria_ml)::numeric, 0) AS avg_meta_diaria_ml
+      FROM usuarios;
+    `);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("STATS error:", err);
+    res.status(500).json({ error: "Error obteniendo stats" });
   }
 });
 
@@ -172,21 +188,6 @@ app.delete("/api/admin/users/:id", async (req, res) => {
   }
 });
 
-app.get("/api/admin/users/stats", async (_req, res) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT
-        COUNT(*)::int AS total_users,
-        ROUND(AVG(peso_kg)::numeric, 1) AS avg_peso_kg,
-        ROUND(AVG(meta_diaria_ml)::numeric, 0) AS avg_meta_diaria_ml
-      FROM usuarios;
-    `);
-    res.json(rows[0]);
-  } catch (err) {
-    console.error("STATS error:", err);
-    res.status(500).json({ error: "Error obteniendo stats" });
-  }
-});
 
 app.listen(port, () => {
   console.log(`API corriendo en http://localhost:${port}`);

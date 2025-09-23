@@ -1,95 +1,169 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Users, Search, Filter, Edit, Trash2, ArrowLeft, UserCheck, Weight, Droplets } from "lucide-react"
+import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Users, Search, Filter, Edit, Trash2, ArrowLeft, UserCheck, Weight, Droplets, X } from "lucide-react"
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
-  const [filteredUsers, setFilteredUsers] = useState([])
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState(null)
+  const [editForm, setEditForm] = useState({
+    nombre: "",
+    correo: "",
+    password: "",
+    sexo: "",
+    edad: "",
+    peso_kg: "",
+  })
+  const [stats, setStats] = useState({ total_users: 0, avg_peso_kg: 0, avg_meta_diaria_ml: 0 })
+  const [error, setError] = useState("")
 
-  // Mock data based on the database schema from the endpoint
+  const toApiSexo = (v) => (v ? v.toLowerCase() : null) 
+  const toUiSexo = (v) => (v ? v.charAt(0).toUpperCase() + v.slice(1) : "")
+
+  const debouncedSearch = useDebounce(searchTerm, 300)
+
   useEffect(() => {
-    // Simulate API call to fetch users
-    const mockUsers = [
-      {
-        id: 1,
-        nombre: "Juan Pérez",
-        correo: "juan@email.com",
-        sexo: "Hombre",
-        edad: 28,
-        peso_kg: 75,
-        meta_diaria_ml: 2625,
-        created_at: "2024-01-15T10:30:00Z",
-      },
-      {
-        id: 2,
-        nombre: "María García",
-        correo: "maria@email.com",
-        sexo: "Mujer",
-        edad: 32,
-        peso_kg: 60,
-        meta_diaria_ml: 2100,
-        created_at: "2024-01-16T14:20:00Z",
-      },
-      {
-        id: 3,
-        nombre: "Carlos López",
-        correo: "carlos@email.com",
-        sexo: "Hombre",
-        edad: 25,
-        peso_kg: 80,
-        meta_diaria_ml: 2800,
-        created_at: "2024-01-17T09:15:00Z",
-      },
-      {
-        id: 4,
-        nombre: "Ana Martínez",
-        correo: "ana@email.com",
-        sexo: "Mujer",
-        edad: null,
-        peso_kg: null,
-        meta_diaria_ml: 2000,
-        created_at: "2024-01-18T16:45:00Z",
-      },
-    ]
+    let alive = true
+    async function load() {
+      setLoading(true)
+      setError("")
+      try {
+        const q = debouncedSearch ? `?q=${encodeURIComponent(debouncedSearch)}&limit=100` : `?limit=100`
+        const [usersRes, statsRes] = await Promise.all([
+          fetch(`/api/admin/users${q}`),
+          fetch(`/api/admin/users/stats`),
+        ])
+        if (!usersRes.ok) throw new Error("Error listando usuarios")
+        if (!statsRes.ok) throw new Error("Error obteniendo stats")
 
-    setTimeout(() => {
-      setUsers(mockUsers)
-      setFilteredUsers(mockUsers)
-      setLoading(false)
-    }, 1000)
-  }, [])
+        const usersData = await usersRes.json() 
+        const statsData = await statsRes.json()
 
-  // Filter users based on search term
-  useEffect(() => {
-    const filtered = users.filter(
-      (user) =>
-        user.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        user.correo.toLowerCase().includes(searchTerm.toLowerCase()),
+        if (!alive) return
+        setUsers(usersData.items || [])
+        setTotal(usersData.total || 0)
+        setStats({
+          total_users: Number(statsData.total_users || 0),
+          avg_peso_kg: Number(statsData.avg_peso_kg || 0),
+          avg_meta_diaria_ml: Number(statsData.avg_meta_diaria_ml || 0),
+        })
+      } catch (e) {
+        if (!alive) return
+        setError(e?.message || "Error cargando datos")
+      } finally {
+        if (alive) setLoading(false)
+      }
+    }
+    load()
+    return () => { alive = false }
+  }, [debouncedSearch])
+
+  const filteredUsers = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase()
+    if (!term) return users
+    return users.filter(
+      (u) =>
+        (u.nombre || "").toLowerCase().includes(term) ||
+        (u.correo || "").toLowerCase().includes(term)
     )
-    setFilteredUsers(filtered)
-  }, [searchTerm, users])
+  }, [users, searchTerm])
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString("es-ES", {
+  const formatDate = (dateString) =>
+    new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
       month: "short",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
     })
+
+  const handleDeleteUser = async (userId) => {
+    if (!confirm("¿Estás seguro de que quieres eliminar este usuario?")) return
+    const prev = users
+    setUsers((u) => u.filter((x) => x.id !== userId))
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, { method: "DELETE" })
+      if (!res.ok) throw new Error("No se pudo eliminar")
+      const s = await fetch(`/api/admin/users/stats`)
+      if (s.ok) setStats(await s.json())
+      setTotal((t) => Math.max(0, t - 1))
+    } catch (e) {
+      setUsers(prev)
+      alert("Error eliminando usuario")
+      console.error(e)
+    }
   }
 
-  const handleDeleteUser = (userId) => {
-    if (confirm("¿Estás seguro de que quieres eliminar este usuario?")) {
-      setUsers(users.filter((user) => user.id !== userId))
+  const handleEditUser = (user) => {
+    setEditingUser(user)
+    setEditForm({
+      nombre: user.nombre || "",
+      correo: user.correo || "",
+      password: "",
+      sexo: toUiSexo(user.sexo || ""),
+      edad: user.edad ?? "",
+      peso_kg: user.peso_kg ?? "",
+    })
+    setIsEditModalOpen(true)
+  }
+
+  // guardar (PATCH)
+  const handleSaveUser = async () => {
+    if (!editingUser) return
+    const id = editingUser.id
+
+    const body = {}
+    if (editForm.nombre !== editingUser.nombre) body.nombre = editForm.nombre
+    if (editForm.correo !== editingUser.correo) body.correo = editForm.correo
+    if (editForm.password && editForm.password.length > 0) body.password = editForm.password
+    if (toApiSexo(editForm.sexo) !== (editingUser.sexo || null)) body.sexo = toApiSexo(editForm.sexo)
+    if (editForm.edad !== (editingUser.edad ?? "")) body.edad = editForm.edad === "" ? null : Number(editForm.edad)
+    if (editForm.peso_kg !== (editingUser.peso_kg ?? "")) body.peso_kg = editForm.peso_kg === "" ? null : Number(editForm.peso_kg)
+
+    try {
+      const res = await fetch(`/api/admin/users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const err = await safeJson(res)
+        throw new Error(err?.error || "Error actualizando usuario")
+      }
+      const updated = await res.json()
+
+      setUsers((prev) => prev.map((u) => (u.id === id ? updated : u)))
+      const s = await fetch(`/api/admin/users/stats`)
+      if (s.ok) setStats(await s.json())
+
+      handleCloseModal()
+    } catch (e) {
+      alert(e.message || "Error guardando cambios")
+      console.error(e)
     }
+  }
+
+  const handleCloseModal = () => {
+    setIsEditModalOpen(false)
+    setEditingUser(null)
+    setEditForm({
+      nombre: "",
+      correo: "",
+      password: "",
+      sexo: "",
+      edad: "",
+      peso_kg: "",
+    })
   }
 
   if (loading) {
@@ -106,7 +180,6 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-gray-900">
       <div className="container mx-auto p-6 max-w-7xl">
-        {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
             <Link href="/dashboard">
@@ -122,17 +195,17 @@ export default function AdminDashboard() {
             <div>
               <h1 className="text-3xl font-bold text-white">Panel de Administración</h1>
               <p className="text-gray-400">Gestiona todos los usuarios registrados</p>
+              {error && <p className="text-red-400 mt-1 text-sm">{error}</p>}
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Users className="h-8 w-8 text-cyan-500" />
             <div className="text-lg px-3 py-1 bg-gray-800 text-cyan-400 border border-gray-700 rounded-md">
-              {filteredUsers.length} usuarios
+              {filteredUsers.length}/{total} usuarios
             </div>
           </div>
         </div>
 
-        {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <Card className="bg-gray-800 border-gray-700">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -140,7 +213,7 @@ export default function AdminDashboard() {
               <UserCheck className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-cyan-500">{users.length}</div>
+              <div className="text-2xl font-bold text-cyan-500">{stats.total_users}</div>
             </CardContent>
           </Card>
 
@@ -151,11 +224,7 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-blue-500">
-                {Math.round(
-                  users.filter((u) => u.peso_kg).reduce((acc, u) => acc + u.peso_kg, 0) /
-                    users.filter((u) => u.peso_kg).length,
-                ) || 0}{" "}
-                kg
+                {Math.round(stats.avg_peso_kg || 0)} kg
               </div>
             </CardContent>
           </Card>
@@ -167,13 +236,12 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-cyan-500">
-                {Math.round(users.reduce((acc, u) => acc + u.meta_diaria_ml, 0) / users.length) || 0} ml
+                {Math.round(stats.avg_meta_diaria_ml || 0)} ml
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Search and Filters */}
         <Card className="mb-6 bg-gray-800 border-gray-700">
           <CardContent className="pt-6">
             <div className="flex flex-col sm:flex-row gap-4">
@@ -194,7 +262,6 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
 
-        {/* Users Table */}
         <Card className="bg-gray-800 border-gray-700">
           <CardHeader>
             <CardTitle className="text-white">Lista de Usuarios</CardTitle>
@@ -228,7 +295,7 @@ export default function AdminDashboard() {
                                 user.sexo ? "bg-cyan-600 text-white" : "bg-gray-700 text-gray-300"
                               }`}
                             >
-                              {user.sexo || "No especificado"}
+                              {toUiSexo(user.sexo) || "No especificado"}
                             </span>
                           </div>
                           <div className="text-sm text-gray-400">
@@ -251,6 +318,7 @@ export default function AdminDashboard() {
                           <Button
                             variant="outline"
                             size="sm"
+                            onClick={() => handleEditUser(user)}
                             className="border-gray-600 text-gray-300 hover:bg-gray-700 bg-transparent"
                           >
                             <Edit className="h-4 w-4" />
@@ -280,6 +348,136 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {isEditModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-800 rounded-lg border border-gray-700 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-gray-700">
+              <h2 className="text-xl font-semibold text-white">Editar Usuario</h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCloseModal}
+                className="text-gray-400 hover:text-white hover:bg-gray-700"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-nombre" className="text-gray-300">Nombre</Label>
+                <Input
+                  id="edit-nombre"
+                  value={editForm.nombre}
+                  onChange={(e) => setEditForm({ ...editForm, nombre: e.target.value })}
+                  className="bg-gray-700 border-gray-600 text-white placeholder-gray-400 focus:border-cyan-500"
+                  placeholder="Nombre completo"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-correo" className="text-gray-300">Correo</Label>
+                <Input
+                  id="edit-correo"
+                  type="email"
+                  value={editForm.correo}
+                  onChange={(e) => setEditForm({ ...editForm, correo: e.target.value })}
+                  className="bg-gray-700 border-gray-600 text-white placeholder-gray-400 focus:border-cyan-500"
+                  placeholder="correo@ejemplo.com"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-password" className="text-gray-300">Nueva Contraseña</Label>
+                <Input
+                  id="edit-password"
+                  type="password"
+                  value={editForm.password}
+                  onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                  className="bg-gray-700 border-gray-600 text-white placeholder-gray-400 focus:border-cyan-500"
+                  placeholder="Dejar vacío para mantener actual"
+                />
+              </div>
+
+              <div className="space-y-3">
+                <Label className="text-gray-300">Sexo</Label>
+                <RadioGroup
+                  value={editForm.sexo}
+                  onValueChange={(value) => setEditForm({ ...editForm, sexo: value })}
+                  className="flex gap-6"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="Hombre" id="edit-hombre" className="border-gray-600 text-cyan-500" />
+                    <Label htmlFor="edit-hombre" className="text-gray-300">Hombre</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="Mujer" id="edit-mujer" className="border-gray-600 text-cyan-500" />
+                    <Label htmlFor="edit-mujer" className="text-gray-300">Mujer</Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-edad" className="text-gray-300">Edad</Label>
+                  <Input
+                    id="edit-edad"
+                    type="number"
+                    value={editForm.edad}
+                    onChange={(e) => setEditForm({ ...editForm, edad: e.target.value })}
+                    className="bg-gray-700 border-gray-600 text-white placeholder-gray-400 focus:border-cyan-500"
+                    placeholder="Años"
+                    min="1"
+                    max="120"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit-peso" className="text-gray-300">Peso (kg)</Label>
+                  <Input
+                    id="edit-peso"
+                    type="number"
+                    value={editForm.peso_kg}
+                    onChange={(e) => setEditForm({ ...editForm, peso_kg: e.target.value })}
+                    className="bg-gray-700 border-gray-600 text-white placeholder-gray-400 focus:border-cyan-500"
+                    placeholder="kg"
+                    min="1"
+                    max="300"
+                    step="0.1"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 p-6 border-t border-gray-700">
+              <Button
+                onClick={handleCloseModal}
+                variant="outline"
+                className="flex-1 border-gray-600 text-gray-300 hover:bg-gray-700 bg-transparent"
+              >
+                Cancelar
+              </Button>
+              <Button onClick={handleSaveUser} className="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white">
+                Guardar Cambios
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
+}
+
+async function safeJson(res) {
+  try { return await res.json() } catch { return null }
+}
+
+function useDebounce(value, delay = 300) {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delay)
+    return () => clearTimeout(id)
+  }, [value, delay])
+  return debounced
 }
