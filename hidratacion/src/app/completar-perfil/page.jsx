@@ -32,7 +32,7 @@ export default function CompletarPerfilPage() {
     const completeUserData = { ...registrationData, ...profileData };
 
     try {
-      const res = await fetch("/api/registro", {
+      const res = await fetch("/api/register", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
