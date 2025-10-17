@@ -60,10 +60,13 @@ export default function Dashboard() {
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
-          <p className="text-gray-400 text-lg">Bienvenido Usuario</p>
+          <h1 className="text-3xl font-bold mb-2 text-cyan-400">Dashboard</h1>
+          <p className="text-blue-300 text-lg">Bienvenido Usuario</p>
           <div className="mt-4">
-            <Link href="/" className="text-cyan-400 hover:text-cyan-300 text-sm">
+            <Link
+              href="/"
+              className="text-cyan-400 hover:text-cyan-300 text-sm font-medium"
+            >
               ← Volver al inicio
             </Link>
           </div>
@@ -72,33 +75,58 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Water Tracking */}
           <div className="lg:col-span-2">
-            <Card className="bg-gray-900 border-gray-800">
+            <Card className="bg-gray-900 border border-gray-800 shadow-lg shadow-cyan-900/30">
               <CardContent className="p-8">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
                   {/* Water Stats */}
                   <div className="space-y-6">
                     <div>
                       <p className="text-cyan-400 text-xl font-semibold mb-2">
-                        Hoy debes tomar: {dailyGoal.toLocaleString()} ml
+                        Hoy debes tomar:{" "}
+                        <span className="text-white">
+                          {dailyGoal.toLocaleString()} ml
+                        </span>
                       </p>
-                      <p className="text-green-400 text-lg">Has tomado: {waterIntake.toLocaleString()} ml</p>
+                      <p className="text-green-400 text-lg">
+                        Has tomado:{" "}
+                        <span className="text-white">
+                          {waterIntake.toLocaleString()} ml
+                        </span>
+                      </p>
                     </div>
 
                     <div className="space-y-3">
                       <div className="flex justify-between text-sm">
-                        <span>Progreso diario</span>
-                        <span>{Math.round(progressPercentage)}%</span>
+                        <span className="text-blue-300 font-medium">
+                          Progreso diario
+                        </span>
+                        <span className="text-white font-semibold">
+                          {Math.round(progressPercentage)}%
+                        </span>
                       </div>
-                      <Progress value={progressPercentage} className="h-3 bg-gray-800" />
+                      <Progress
+                        value={progressPercentage}
+                        className="h-3 bg-gray-800"
+                      />
                     </div>
                   </div>
 
                   {/* Circular Progress Chart */}
                   <div className="flex justify-center">
                     <div className="relative w-48 h-48">
-                      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                      <svg
+                        className="w-full h-full transform -rotate-90"
+                        viewBox="0 0 100 100"
+                      >
                         {/* Background circle */}
-                        <circle cx="50" cy="50" r="40" stroke="rgb(31, 41, 55)" strokeWidth="8" fill="transparent" />
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="40"
+                          stroke="rgb(31, 41, 55)"
+                          strokeWidth="8"
+                          fill="transparent"
+                        />
                         {/* Progress circle */}
                         <circle
                           cx="50"
@@ -112,7 +140,13 @@ export default function Dashboard() {
                           className="transition-all duration-500"
                         />
                         <defs>
-                          <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                          <linearGradient
+                            id="gradient"
+                            x1="0%"
+                            y1="0%"
+                            x2="100%"
+                            y2="0%"
+                          >
                             <stop offset="0%" stopColor="rgb(34, 197, 94)" />
                             <stop offset="100%" stopColor="rgb(6, 182, 212)" />
                           </linearGradient>
@@ -128,22 +162,35 @@ export default function Dashboard() {
             </Card>
 
             {/* History */}
-            <Card className="bg-gray-900 border-gray-800 mt-6">
+            <Card className="bg-gray-900 border border-gray-800 mt-6 shadow-md shadow-cyan-900/20">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Clock className="w-5 h-5" />
+                <CardTitle className="flex items-center gap-2 text-cyan-300">
+                  <Clock className="w-5 h-5 text-cyan-400" />
                   Historial
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
                   {history.map((entry, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
+                    <div
+                      key={index}
+                      className="flex items-center justify-between p-3 bg-gray-800 rounded-lg"
+                    >
                       <div className="flex items-center gap-4">
-                        <span className="text-gray-300 font-mono">{entry.time}</span>
-                        <span className="text-gray-400">{entry.amount} ml</span>
+                        <span className="text-blue-300 font-mono">
+                          {entry.time}
+                        </span>
+                        <span className="text-gray-300">
+                          {entry.amount} ml
+                        </span>
                       </div>
-                      <span className={`font-semibold ${entry.status === "taken" ? "text-green-400" : "text-red-400"}`}>
+                      <span
+                        className={`font-semibold ${
+                          entry.status === "taken"
+                            ? "text-green-400"
+                            : "text-red-400"
+                        }`}
+                      >
                         {entry.status === "taken" ? "Tomado" : "Omitido"}
                       </span>
                     </div>
@@ -155,22 +202,29 @@ export default function Dashboard() {
 
           {/* Notifications Panel */}
           <div className="lg:col-span-1">
-            <Card className="bg-gray-900 border-gray-800">
+            <Card className="bg-gray-900 border border-gray-800 shadow-lg shadow-cyan-900/20">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Bell className="w-5 h-5" />
+                <CardTitle className="flex items-center gap-2 text-cyan-300">
+                  <Bell className="w-5 h-5 text-cyan-400" />
                   Notificaciones
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="text-center space-y-4">
                   <div className="p-4 bg-gray-800 rounded-lg">
-                    <h3 className="font-semibold text-lg mb-2">¡Hora de tomar agua!</h3>
-                    <p className="text-gray-400 text-sm">Son las 11:00 AM. Te toca hidratarte con 250 ml.</p>
+                    <h3 className="font-semibold text-lg mb-2 text-green-400">
+                      ¡Hora de tomar agua!
+                    </h3>
+                    <p className="text-blue-300 text-sm">
+                      Son las 11:00 AM. Te toca hidratarte con 250 ml.
+                    </p>
                   </div>
 
                   <div className="space-y-3">
-                    <Button onClick={handleDrinkWater} className="w-full bg-green-600 hover:bg-green-700 text-white">
+                    <Button
+                      onClick={handleDrinkWater}
+                      className="w-full bg-green-600 hover:bg-green-700 text-white"
+                    >
                       <Check className="w-4 h-4 mr-2" />
                       Sí, ya tomé
                     </Button>
