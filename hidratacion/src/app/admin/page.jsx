@@ -27,7 +27,10 @@ export default function AdminDashboard() {
   const [stats, setStats] = useState({ total_users: 0, avg_peso_kg: 0, avg_meta_diaria_ml: 0 })
   const [error, setError] = useState("")
 
-  const toApiSexo = (v) => (v ? v.toLowerCase() : null) 
+  // ▼ NUEVO: selección múltiple
+  const [selectedIds, setSelectedIds] = useState([])
+
+  const toApiSexo = (v) => (v ? v.toLowerCase() : null)
   const toUiSexo = (v) => (v ? v.charAt(0).toUpperCase() + v.slice(1) : "")
 
   const debouncedSearch = useDebounce(searchTerm, 300)
@@ -46,7 +49,7 @@ export default function AdminDashboard() {
         if (!usersRes.ok) throw new Error("Error listando usuarios")
         if (!statsRes.ok) throw new Error("Error obteniendo stats")
 
-        const usersData = await usersRes.json() 
+        const usersData = await usersRes.json()
         const statsData = await statsRes.json()
 
         if (!alive) return
@@ -57,6 +60,8 @@ export default function AdminDashboard() {
           avg_peso_kg: Number(statsData.avg_peso_kg || 0),
           avg_meta_diaria_ml: Number(statsData.avg_meta_diaria_ml || 0),
         })
+        // reset selección si cambia la lista
+        setSelectedIds([])
       } catch (e) {
         if (!alive) return
         setError(e?.message || "Error cargando datos")
@@ -78,6 +83,15 @@ export default function AdminDashboard() {
     )
   }, [users, searchTerm])
 
+  // ▼ NUEVO: helpers de selección
+  const allSelected = filteredUsers.length > 0 && selectedIds.length === filteredUsers.length
+  const toggleOne = (id) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+  const toggleAll = () => {
+    setSelectedIds(allSelected ? [] : filteredUsers.map((u) => u.id))
+  }
+
   const formatDate = (dateString) =>
     new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
@@ -97,9 +111,42 @@ export default function AdminDashboard() {
       const s = await fetch(`/api/admin/users/stats`)
       if (s.ok) setStats(await s.json())
       setTotal((t) => Math.max(0, t - 1))
+      setSelectedIds((sel) => sel.filter((id) => id !== userId))
     } catch (e) {
       setUsers(prev)
       alert("Error eliminando usuario")
+      console.error(e)
+    }
+  }
+
+  // ▼ NUEVO: eliminación masiva
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return
+    if (!confirm(`¿Eliminar ${selectedIds.length} usuario(s)?`)) return
+
+    const prevUsers = users
+    // actualización optimista
+    setUsers((u) => u.filter((x) => !selectedIds.includes(x.id)))
+    try {
+      const res = await fetch(`/api/admin/users/bulk-delete`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIds }),
+      })
+      const data = await safeJson(res)
+      if (!res.ok) {
+        throw new Error(data?.error || "No se pudo eliminar en bloque")
+      }
+      // refrescar stats
+      const s = await fetch(`/api/admin/users/stats`)
+      if (s.ok) setStats(await s.json())
+
+      setTotal((t) => Math.max(0, t - (data?.deleted?.length || selectedIds.length)))
+      setSelectedIds([])
+    } catch (e) {
+      // revertir optimista
+      setUsers(prevUsers)
+      alert(e.message || "Error en eliminación masiva")
       console.error(e)
     }
   }
@@ -258,6 +305,14 @@ export default function AdminDashboard() {
                 <Filter className="h-4 w-4 mr-2" />
                 Filtros
               </Button>
+
+              {/* ▼ NUEVO: botón de eliminación masiva */}
+              {selectedIds.length > 0 && (
+                <Button onClick={handleBulkDelete} className="bg-red-600 hover:bg-red-700 text-white">
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Eliminar seleccionados ({selectedIds.length})
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -271,6 +326,15 @@ export default function AdminDashboard() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-700">
+                    {/* ▼ NUEVO: checkbox seleccionar todo */}
+                    <th className="text-left py-3 px-4 w-12">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleAll}
+                        className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-gray-800 cursor-pointer"
+                      />
+                    </th>
                     <th className="text-left py-3 px-4 font-medium text-gray-400">Usuario</th>
                     <th className="text-left py-3 px-4 font-medium text-gray-400">Perfil</th>
                     <th className="text-left py-3 px-4 font-medium text-gray-400">Meta Diaria</th>
@@ -281,6 +345,16 @@ export default function AdminDashboard() {
                 <tbody>
                   {filteredUsers.map((user) => (
                     <tr key={user.id} className="border-b border-gray-700 hover:bg-gray-700/50 transition-colors">
+                      {/* ▼ NUEVO: checkbox por fila */}
+                      <td className="py-4 px-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(user.id)}
+                          onChange={() => toggleOne(user.id)}
+                          className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-gray-800 cursor-pointer"
+                        />
+                      </td>
+
                       <td className="py-4 px-4">
                         <div>
                           <div className="font-medium text-white">{user.nombre}</div>

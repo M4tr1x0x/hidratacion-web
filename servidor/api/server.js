@@ -177,6 +177,28 @@ app.patch("/api/admin/users/:id", async (req, res) => {
   }
 });
 
+app.delete("/api/admin/users/bulk-delete", async (req, res) => {
+  try {
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "Debe enviar un arreglo 'ids' con al menos un id." });
+    }
+    const parsed = ids.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0);
+    if (parsed.length === 0) {
+      return res.status(400).json({ error: "Los ids deben ser enteros positivos." });
+    }
+
+    const sql = "DELETE FROM usuarios WHERE id = ANY($1::int[]) RETURNING id";
+    const { rows } = await pool.query(sql, [parsed]);
+
+    return res.json({ deleted: rows.map((r) => r.id) });
+  } catch (err) {
+    console.error("BULK DELETE error:", err);
+    return res.status(500).json({ error: "Error al eliminar usuarios" });
+  }
+});
+
 app.delete("/api/admin/users/:id", async (req, res) => {
   try {
     const r = await pool.query("DELETE FROM usuarios WHERE id = $1", [req.params.id]);
@@ -188,7 +210,10 @@ app.delete("/api/admin/users/:id", async (req, res) => {
   }
 });
 
+module.exports = { app, pool, calcularMetaDiariaMl };
 
-app.listen(port, () => {
-  console.log(`API corriendo en http://localhost:${port}`);
-});
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`API corriendo en http://localhost:${port}`);
+  });
+}
