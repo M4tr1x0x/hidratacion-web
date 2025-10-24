@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -9,18 +10,49 @@ import { Mail, Lock, LogIn } from "lucide-react"
 import Link from "next/link"
 
 export default function IniciarSesionPage() {
+  const router = useRouter()
+
   const [formData, setFormData] = useState({
     correo: "",
     contraseña: "",
   })
-
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    console.log("Login attempt:", formData)
-  }
+  const [loading, setLoading] = useState(false)
+  const [msg, setMsg] = useState(null)
 
   const handleInputChange = (field, value) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setMsg(null)
+    setLoading(true)
+
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          correo: formData.correo,
+          password: formData.contraseña, // mapeo a "password"
+        }),
+        credentials: "include", // para cookies httpOnly
+      })
+
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        const text = typeof data?.error === "string" ? data.error : "No se pudo iniciar sesión"
+        setMsg({ type: "error", text })
+      } else {
+        setMsg({ type: "success", text: data?.message || "Inicio de sesión exitoso" })
+        setTimeout(() => router.push("/dashboard"), 600)
+      }
+    } catch (err) {
+      setMsg({ type: "error", text: "Error de red o servidor. Intenta de nuevo." })
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -29,14 +61,25 @@ export default function IniciarSesionPage() {
         <CardHeader className="text-center space-y-4">
           <CardTitle className="text-2xl font-bold text-foreground">Iniciar Sesión</CardTitle>
           <div className="flex justify-center space-x-2">
-            <div className="w-2 h-2 bg-cyan-500 rounded-full"></div>
-            <div className="w-2 h-2 bg-cyan-500 rounded-full"></div>
-            <div className="w-2 h-2 bg-cyan-500 rounded-full"></div>
-            <div className="w-2 h-2 bg-cyan-500 rounded-full"></div>
-            <div className="w-2 h-2 bg-cyan-500 rounded-full"></div>
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="w-2 h-2 bg-cyan-500 rounded-full" />
+            ))}
           </div>
         </CardHeader>
+
         <CardContent>
+          {msg && (
+            <div
+              className={`mb-4 rounded-md border p-3 text-sm ${
+                msg.type === "error"
+                  ? "border-red-500/40 bg-red-500/10 text-red-400"
+                  : "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+              }`}
+            >
+              {msg.text}
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="correo" className="text-foreground font-medium">
@@ -76,9 +119,10 @@ export default function IniciarSesionPage() {
 
             <Button
               type="submit"
-              className="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-medium py-3 flex items-center justify-center gap-2"
+              disabled={loading}
+              className="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-medium py-3 flex items-center justify-center gap-2 disabled:opacity-70"
             >
-              Iniciar Sesión
+              {loading ? "Ingresando..." : "Iniciar Sesión"}
               <LogIn className="h-4 w-4" />
             </Button>
           </form>

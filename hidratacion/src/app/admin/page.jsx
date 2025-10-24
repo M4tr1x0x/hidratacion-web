@@ -8,6 +8,19 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Users, Search, Filter, Edit, Trash2, ArrowLeft, UserCheck, Weight, Droplets, X } from "lucide-react"
+import {
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts"
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState([])
@@ -26,13 +39,11 @@ export default function AdminDashboard() {
   })
   const [stats, setStats] = useState({ total_users: 0, avg_peso_kg: 0, avg_meta_diaria_ml: 0 })
   const [error, setError] = useState("")
-
-  // ▼ NUEVO: selección múltiple
   const [selectedIds, setSelectedIds] = useState([])
 
   const toApiSexo = (v) => (v ? v.toLowerCase() : null)
   const toUiSexo = (v) => (v ? v.charAt(0).toUpperCase() + v.slice(1) : "")
-
+  const normSexo = (v) => (v || "").toString().trim().toLowerCase()
   const debouncedSearch = useDebounce(searchTerm, 300)
 
   useEffect(() => {
@@ -60,7 +71,6 @@ export default function AdminDashboard() {
           avg_peso_kg: Number(statsData.avg_peso_kg || 0),
           avg_meta_diaria_ml: Number(statsData.avg_meta_diaria_ml || 0),
         })
-        // reset selección si cambia la lista
         setSelectedIds([])
       } catch (e) {
         if (!alive) return
@@ -83,7 +93,6 @@ export default function AdminDashboard() {
     )
   }, [users, searchTerm])
 
-  // ▼ NUEVO: helpers de selección
   const allSelected = filteredUsers.length > 0 && selectedIds.length === filteredUsers.length
   const toggleOne = (id) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -119,13 +128,11 @@ export default function AdminDashboard() {
     }
   }
 
-  // ▼ NUEVO: eliminación masiva
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return
     if (!confirm(`¿Eliminar ${selectedIds.length} usuario(s)?`)) return
 
     const prevUsers = users
-    // actualización optimista
     setUsers((u) => u.filter((x) => !selectedIds.includes(x.id)))
     try {
       const res = await fetch(`/api/admin/users/bulk-delete`, {
@@ -137,14 +144,12 @@ export default function AdminDashboard() {
       if (!res.ok) {
         throw new Error(data?.error || "No se pudo eliminar en bloque")
       }
-      // refrescar stats
       const s = await fetch(`/api/admin/users/stats`)
       if (s.ok) setStats(await s.json())
 
       setTotal((t) => Math.max(0, t - (data?.deleted?.length || selectedIds.length)))
       setSelectedIds([])
     } catch (e) {
-      // revertir optimista
       setUsers(prevUsers)
       alert(e.message || "Error en eliminación masiva")
       console.error(e)
@@ -164,7 +169,6 @@ export default function AdminDashboard() {
     setIsEditModalOpen(true)
   }
 
-  // guardar (PATCH)
   const handleSaveUser = async () => {
     if (!editingUser) return
     const id = editingUser.id
@@ -213,6 +217,46 @@ export default function AdminDashboard() {
     })
   }
 
+  // ---------- CHART DATA (conversión segura a número) ----------
+  const num = (v) => {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  }
+
+  const chartData = useMemo(() => {
+    const hombres = users.filter((u) => normSexo(u.sexo) === "hombre")
+    const mujeres = users.filter((u) => normSexo(u.sexo) === "mujer")
+    const sinSexo = users.filter((u) => !normSexo(u.sexo))
+
+    const genderData = [
+      { name: "Hombres", value: hombres.length },
+      { name: "Mujeres", value: mujeres.length },
+      { name: "No especificado", value: sinSexo.length },
+    ].filter((d) => d.value > 0)
+
+    const avg = (arr) => {
+      const vals = arr.map((u) => num(u.peso_kg)).filter((v) => v !== null)
+      if (vals.length === 0) return 0
+      return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length)
+    }
+
+    const weightByGender = [
+      { genero: "Hombres", peso: avg(hombres) },
+      { genero: "Mujeres",  peso: avg(mujeres)  },
+    ] // no filtramos > 0, para no vaciar la serie
+
+    const goalRanges = [
+      { rango: "< 2000ml",    count: users.filter((u) => (num(u.meta_diaria_ml) ?? 0) < 2000).length },
+      { rango: "2000-2500ml", count: users.filter((u) => (num(u.meta_diaria_ml) ?? 0) >= 2000 && (num(u.meta_diaria_ml) ?? 0) < 2500).length },
+      { rango: "2500-3000ml", count: users.filter((u) => (num(u.meta_diaria_ml) ?? 0) >= 2500 && (num(u.meta_diaria_ml) ?? 0) < 3000).length },
+      { rango: "> 3000ml",    count: users.filter((u) => (num(u.meta_diaria_ml) ?? 0) >= 3000).length },
+    ].filter((d) => d.count > 0)
+
+    return { genderData, weightByGender, goalRanges }
+  }, [users])
+
+  const COLORS = ["#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6"]
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -253,6 +297,7 @@ export default function AdminDashboard() {
           </div>
         </div>
 
+        {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <Card className="bg-gray-800 border-gray-700">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -289,6 +334,97 @@ export default function AdminDashboard() {
           </Card>
         </div>
 
+        {/* GRÁFICAS */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <Card className="bg-gray-800 border-gray-700">
+            <CardHeader>
+              <CardTitle className="text-white">Distribución por Género</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={chartData.genderData}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                    outerRadius={80}
+                    fill="#8884d8"
+                    dataKey="value"
+                  >
+                    {chartData.genderData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#1f2937",
+                      border: "1px solid #374151",
+                      borderRadius: "0.5rem",
+                      color: "#fff",
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gray-800 border-gray-700">
+            <CardHeader>
+              <CardTitle className="text-white">Peso Promedio por Género</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {chartData.weightByGender.every((d) => d.peso === 0) ? (
+                <div className="text-center text-gray-400 py-12">Sin datos suficientes</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={chartData.weightByGender}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis dataKey="genero" stroke="#9ca3af" />
+                    <YAxis stroke="#9ca3af" />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#1f2937",
+                        border: "1px solid #374151",
+                        borderRadius: "0.5rem",
+                        color: "#fff",
+                      }}
+                    />
+                    <Bar dataKey="peso" fill="#06b6d4" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gray-800 border-gray-700 lg:col-span-2">
+            <CardHeader>
+              <CardTitle className="text-white">Distribución de Metas Diarias</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={chartData.goalRanges}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="rango" stroke="#9ca3af" />
+                  <YAxis stroke="#9ca3af" />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#1f2937",
+                      border: "1px solid #374151",
+                      borderRadius: "0.5rem",
+                      color: "#fff",
+                    }}
+                  />
+                  <Legend wrapperStyle={{ color: "#9ca3af" }} />
+                  <Bar dataKey="count" fill="#3b82f6" radius={[8, 8, 0, 0]} name="Usuarios" />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Buscador + acciones */}
         <Card className="mb-6 bg-gray-800 border-gray-700">
           <CardContent className="pt-6">
             <div className="flex flex-col sm:flex-row gap-4">
@@ -306,7 +442,6 @@ export default function AdminDashboard() {
                 Filtros
               </Button>
 
-              {/* ▼ NUEVO: botón de eliminación masiva */}
               {selectedIds.length > 0 && (
                 <Button onClick={handleBulkDelete} className="bg-red-600 hover:bg-red-700 text-white">
                   <Trash2 className="h-4 w-4 mr-2" />
@@ -317,6 +452,7 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
 
+        {/* Tabla */}
         <Card className="bg-gray-800 border-gray-700">
           <CardHeader>
             <CardTitle className="text-white">Lista de Usuarios</CardTitle>
@@ -326,7 +462,6 @@ export default function AdminDashboard() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-700">
-                    {/* ▼ NUEVO: checkbox seleccionar todo */}
                     <th className="text-left py-3 px-4 w-12">
                       <input
                         type="checkbox"
@@ -345,7 +480,6 @@ export default function AdminDashboard() {
                 <tbody>
                   {filteredUsers.map((user) => (
                     <tr key={user.id} className="border-b border-gray-700 hover:bg-gray-700/50 transition-colors">
-                      {/* ▼ NUEVO: checkbox por fila */}
                       <td className="py-4 px-4">
                         <input
                           type="checkbox"
@@ -423,6 +557,7 @@ export default function AdminDashboard() {
         </Card>
       </div>
 
+      {/* Modal de edición */}
       {isEditModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-gray-800 rounded-lg border border-gray-700 w-full max-w-md max-h-[90vh] overflow-y-auto">

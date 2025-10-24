@@ -1,7 +1,24 @@
 const express = require("express");
 const { Pool } = require("pg");
+const winston = require("winston");
+const argon2 = require("argon2");
 
 const app = express();
+
+const logger = winston.createLogger({
+  level: "info",
+  format: winston.format.combine(
+    winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
+    winston.format.printf(({ timestamp, level, message }) => {
+      return `[${timestamp}] [${level.toUpperCase()}]: ${message}`;
+    })
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: "app.log" }),
+  ],
+});
+
 const port = process.env.PORT;
 
 const pool = new Pool({
@@ -14,28 +31,40 @@ const pool = new Pool({
 
 app.use(express.json());
 
+app.use((req, res, next) => {
+  logger.info(`${req.method} ${req.originalUrl}`);
+  next();
+});
+
 app.get("/healthz", async (req, res) => {
   try {
     await pool.query("SELECT 1");
+    logger.info("Chequeo de salud exitoso");
     res.send("ok");
-  } catch {
+  } catch (err) {
+    logger.error("Error en /healthz: " + err.message);
     res.status(500).send("db_error");
   }
 });
 
 function calcularMetaDiariaMl(pesoKg) {
   const n = Number(pesoKg);
-  if (!n || n <= 0) return 2000;
-  return Math.round(n * 35);
+  const meta = !n || n <= 0 ? 2000 : Math.round(n * 35);
+  logger.info(`Meta diaria calculada: ${meta} ml (peso ${pesoKg} kg)`);
+  return meta;
 }
 
 app.post("/api/register", async (req, res) => {
   try {
     const { nombre, correo, password, sexo, edad, peso_kg } = req.body;
+    logger.info(`Intento de registro: ${correo}`);
 
     if (!nombre || !correo || !password) {
+      logger.warn("Campos obligatorios faltantes en registro");
       return res.status(400).json({ error: "nombre, correo y password son obligatorios" });
     }
+
+    const hashedPassword = await argon2.hash(password);
 
     const meta_diaria_ml = calcularMetaDiariaMl(peso_kg);
 
@@ -46,16 +75,62 @@ app.post("/api/register", async (req, res) => {
         ($1,$2,$3,$4,$5,$6,$7)
       RETURNING id, nombre, correo, sexo, edad, peso_kg, meta_diaria_ml, created_at;
     `;
-    const vals = [nombre, correo, password, sexo || null, edad || null, peso_kg || null, meta_diaria_ml];
+    const vals = [nombre, correo, hashedPassword, sexo || null, edad || null, peso_kg || null, meta_diaria_ml];
 
     const { rows } = await pool.query(q, vals);
+    logger.info(`Usuario registrado con id ${rows[0].id} (${correo})`);
     return res.status(201).json(rows[0]);
   } catch (err) {
-    if (err && err.code === "23505") {
+    if (err.code === "23505") {
+      logger.warn(`Correo duplicado en registro: ${req.body.correo}`);
       return res.status(409).json({ error: "El correo ya está registrado" });
     }
-    console.error(err);
+    logger.error("Error al crear usuario: " + err.message);
     return res.status(500).json({ error: "Error al crear usuario" });
+  }
+});
+
+app.post("/api/login", async (req, res) => {
+  try {
+    const { correo, password } = req.body;
+    logger.info(`Intento de inicio de sesión: ${correo}`);
+
+    if (!correo || !password) {
+      logger.warn("Campos obligatorios faltantes en login");
+      return res.status(400).json({ error: "correo y password son obligatorios" });
+    }
+
+    const q = `
+      SELECT id, nombre, correo, password, sexo, edad, peso_kg, meta_diaria_ml, created_at
+      FROM usuarios
+      WHERE correo = $1
+      LIMIT 1;
+    `;
+    const { rows } = await pool.query(q, [correo]);
+    const user = rows[0];
+
+    if (!user) {
+      logger.warn(`Login fallido (correo no encontrado): ${correo}`);
+      return res.status(401).json({ error: "Credenciales inválidas" });
+    }
+
+    const passwordOk = await argon2.verify(user.password, password);
+    if (!passwordOk) {
+      logger.warn(`Login fallido (password incorrecto): ${correo}`);
+      return res.status(401).json({ error: "Credenciales inválidas" });
+    }
+
+    const { password: _omit, ...publicUser } = user;
+
+    logger.info(`Login exitoso para id ${user.id} (${correo})`);
+    return res.status(200).json({
+      message: "Inicio de sesión exitoso",
+      user: publicUser,
+    });
+
+  } catch (err) {
+    logger.error("Error en login: " + err.message);
+    return res.status(500).json({ error: "Error en inicio de sesión" });
   }
 });
 
@@ -67,6 +142,8 @@ app.get("/api/admin/users", async (req, res) => {
     const orderByAllowed = new Set(["created_at", "nombre", "correo", "meta_diaria_ml"]);
     const orderBy = orderByAllowed.has(req.query.orderBy) ? req.query.orderBy : "created_at";
     const orderDir = (req.query.orderDir || "desc").toLowerCase() === "asc" ? "asc" : "desc";
+
+    logger.info(`Listando usuarios (q="${q}", limit=${limit}, offset=${offset})`);
 
     const where = q ? `WHERE (LOWER(nombre) LIKE LOWER($1) OR LOWER(correo) LIKE LOWER($1))` : "";
     const params = q ? [`%${q}%`, limit, offset] : [limit, offset];
@@ -83,9 +160,10 @@ app.get("/api/admin/users", async (req, res) => {
     const totalRes = await pool.query(totalSql, q ? [params[0]] : []);
     const itemsRes = await pool.query(itemsSql, params);
 
+    logger.info(`Usuarios listados: ${itemsRes.rows.length}/${totalRes.rows[0].total}`);
     res.json({ total: totalRes.rows[0].total, items: itemsRes.rows });
   } catch (err) {
-    console.error("LIST users error:", err);
+    logger.error("Error listando usuarios: " + err.message);
     res.status(500).json({ error: "Error listando usuarios" });
   }
 });
@@ -99,24 +177,29 @@ app.get("/api/admin/users/stats", async (_req, res) => {
         ROUND(AVG(meta_diaria_ml)::numeric, 0) AS avg_meta_diaria_ml
       FROM usuarios;
     `);
+    logger.info("Estadísticas de usuarios generadas");
     res.json(rows[0]);
   } catch (err) {
-    console.error("STATS error:", err);
+    logger.error("Error obteniendo stats: " + err.message);
     res.status(500).json({ error: "Error obteniendo stats" });
   }
 });
 
 app.get("/api/admin/users/:id", async (req, res) => {
   try {
+    logger.info(`Consultando usuario id=${req.params.id}`);
     const { rows } = await pool.query(
       `SELECT id, nombre, correo, sexo, edad, peso_kg, meta_diaria_ml, created_at
        FROM usuarios WHERE id = $1`,
       [req.params.id]
     );
-    if (rows.length === 0) return res.status(404).json({ error: "No encontrado" });
+    if (rows.length === 0) {
+      logger.warn(`Usuario no encontrado id=${req.params.id}`);
+      return res.status(404).json({ error: "No encontrado" });
+    }
     res.json(rows[0]);
   } catch (err) {
-    console.error("GET user error:", err);
+    logger.error("Error obteniendo usuario: " + err.message);
     res.status(500).json({ error: "Error obteniendo usuario" });
   }
 });
@@ -124,12 +207,17 @@ app.get("/api/admin/users/:id", async (req, res) => {
 app.patch("/api/admin/users/:id", async (req, res) => {
   try {
     const id = req.params.id;
+    logger.info(`Actualizando usuario id=${id}`);
+
     const { nombre, correo, password, sexo, edad, peso_kg } = req.body;
 
     const { rows: curRows } = await pool.query(
       "SELECT sexo, edad, peso_kg FROM usuarios WHERE id = $1", [id]
     );
-    if (curRows.length === 0) return res.status(404).json({ error: "No encontrado" });
+    if (curRows.length === 0) {
+      logger.warn(`Usuario no encontrado para actualización id=${id}`);
+      return res.status(404).json({ error: "No encontrado" });
+    }
     const cur = curRows[0];
 
     const newSexo = (sexo !== undefined) ? sexo : cur.sexo;
@@ -154,6 +242,7 @@ app.patch("/api/admin/users/:id", async (req, res) => {
     if (meta !== undefined) { fields.push(`meta_diaria_ml = $${idx++}`); vals.push(meta); }
 
     if (fields.length === 0) {
+      logger.info(`Sin cambios para usuario id=${id}`);
       const { rows } = await pool.query(
         `SELECT id, nombre, correo, sexo, edad, peso_kg, meta_diaria_ml, created_at FROM usuarios WHERE id = $1`, [id]
       );
@@ -169,10 +258,14 @@ app.patch("/api/admin/users/:id", async (req, res) => {
     `;
 
     const { rows } = await pool.query(sql, vals);
+    logger.info(`Usuario actualizado id=${id}`);
     res.json(rows[0]);
   } catch (err) {
-    if (err.code === "23505") return res.status(409).json({ error: "Correo ya registrado" });
-    console.error("PATCH user error:", err);
+    if (err.code === "23505") {
+      logger.warn(`Correo duplicado al actualizar usuario id=${req.params.id}`);
+      return res.status(409).json({ error: "Correo ya registrado" });
+    }
+    logger.error("Error actualizando usuario: " + err.message);
     res.status(500).json({ error: "Error actualizando usuario" });
   }
 });
@@ -180,10 +273,13 @@ app.patch("/api/admin/users/:id", async (req, res) => {
 app.delete("/api/admin/users/bulk-delete", async (req, res) => {
   try {
     const { ids } = req.body;
+    logger.info(`Eliminación múltiple de usuarios: ${JSON.stringify(ids)}`);
 
     if (!Array.isArray(ids) || ids.length === 0) {
+      logger.warn("No se enviaron IDs para eliminación múltiple");
       return res.status(400).json({ error: "Debe enviar un arreglo 'ids' con al menos un id." });
     }
+
     const parsed = ids.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0);
     if (parsed.length === 0) {
       return res.status(400).json({ error: "Los ids deben ser enteros positivos." });
@@ -192,20 +288,27 @@ app.delete("/api/admin/users/bulk-delete", async (req, res) => {
     const sql = "DELETE FROM usuarios WHERE id = ANY($1::int[]) RETURNING id";
     const { rows } = await pool.query(sql, [parsed]);
 
+    logger.info(`Usuarios eliminados: ${rows.map((r) => r.id).join(", ")}`);
     return res.json({ deleted: rows.map((r) => r.id) });
   } catch (err) {
-    console.error("BULK DELETE error:", err);
+    logger.error("Error al eliminar usuarios: " + err.message);
     return res.status(500).json({ error: "Error al eliminar usuarios" });
   }
 });
 
 app.delete("/api/admin/users/:id", async (req, res) => {
   try {
-    const r = await pool.query("DELETE FROM usuarios WHERE id = $1", [req.params.id]);
-    if (r.rowCount === 0) return res.status(404).json({ error: "No encontrado" });
+    const id = req.params.id;
+    logger.info(`Eliminando usuario id=${id}`);
+    const r = await pool.query("DELETE FROM usuarios WHERE id = $1", [Number(id)]);
+    if (r.rowCount === 0) {
+      logger.warn(`Usuario no encontrado id=${id}`);
+      return res.status(404).json({ error: "No encontrado" });
+    }
+    logger.info(`Usuario eliminado id=${id}`);
     res.status(204).send();
   } catch (err) {
-    console.error("DELETE user error:", err);
+    logger.error("Error eliminando usuario: " + err.message);
     res.status(500).json({ error: "Error eliminando usuario" });
   }
 });
