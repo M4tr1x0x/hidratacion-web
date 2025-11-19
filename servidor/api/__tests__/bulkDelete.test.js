@@ -5,8 +5,15 @@ jest.mock("pg", () => ({
 
 const request = require("supertest");
 const { app } = require("../server");
+const { getAdminCookie } = require("./helpers"); 
 
 describe("DELETE /api/admin/users/bulk-delete", () => {
+  let adminCookie; 
+
+  beforeAll(() => {
+    adminCookie = getAdminCookie();
+  });
+
   beforeEach(() => mockQuery.mockReset());
 
   test("200 → elimina usuarios correctamente", async () => {
@@ -14,8 +21,9 @@ describe("DELETE /api/admin/users/bulk-delete", () => {
 
     const resp = await request(app)
       .delete("/api/admin/users/bulk-delete")
-      .send({ ids: [1, 3] })
-      .set("Content-Type", "application/json");
+      .set("Content-Type", "application/json")
+      .set("Cookie", adminCookie)
+      .send({ ids: [1, 3] });
 
     expect(resp.status).toBe(200);
     expect(resp.body).toEqual({ deleted: [1, 3] });
@@ -29,8 +37,9 @@ describe("DELETE /api/admin/users/bulk-delete", () => {
   test("400 → cuando el arreglo ids está vacío", async () => {
     const resp = await request(app)
       .delete("/api/admin/users/bulk-delete")
-      .send({ ids: [] })
-      .set("Content-Type", "application/json");
+      .set("Content-Type", "application/json")
+      .set("Cookie", adminCookie)
+      .send({ ids: [] });
 
     expect(resp.status).toBe(400);
     expect(resp.body.error).toBeDefined();
@@ -39,8 +48,9 @@ describe("DELETE /api/admin/users/bulk-delete", () => {
   test("400 → cuando ids no es un arreglo válido", async () => {
     const resp = await request(app)
       .delete("/api/admin/users/bulk-delete")
-      .send({ ids: "no_valido" })
-      .set("Content-Type", "application/json");
+      .set("Content-Type", "application/json")
+      .set("Cookie", adminCookie)
+      .send({ ids: "no_valido" });
 
     expect(resp.status).toBe(400);
   });
@@ -48,8 +58,9 @@ describe("DELETE /api/admin/users/bulk-delete", () => {
   test("500 → cuando hay error en base de datos", async () => {
     const resp = await request(app)
       .delete("/api/admin/users/bulk-delete")
-      .send({ ids: [9] })
-      .set("Content-Type", "application/json");
+      .set("Content-Type", "application/json")
+      .set("Cookie", adminCookie)
+      .send({ ids: [9] });
 
     expect(resp.status).toBe(500);
     expect(resp.body.error).toBe("Error al eliminar usuarios");

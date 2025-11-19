@@ -61,10 +61,18 @@ function signToken(user) {
 function authRequired(req, res, next) {
   const token = req.cookies.sessionToken;
 
-  if (!token) return res.status(401).json({ error: "No autenticado" });
+  if (!token) {
+    logger.warn(
+      `Auth requerida sin sessionToken. IP=${req.ip} Path=${req.originalUrl}`
+    );
+    return res.status(401).json({ error: "No autenticado" });
+  }
 
   try {
     req.user = jwt.verify(token, JWT_SECRET);
+    logger.info(
+      `Auth OK usuario id=${req.user.id} rol=${req.user.rol} path=${req.originalUrl}`
+    );
     next();
   } catch (err) {
     logger.warn("JWT inválido: " + err.message);
@@ -74,8 +82,14 @@ function authRequired(req, res, next) {
 
 function adminRequired(req, res, next) {
   if (!req.user || req.user.rol !== "admin") {
+    logger.warn(
+      `Acceso admin denegado. UserId=${req.user?.id || "N/A"} Rol=${req.user?.rol || "N/A"} Path=${req.originalUrl}`
+    );
     return res.status(403).json({ error: "Acceso no autorizado" });
   }
+  logger.info(
+    `Acceso admin permitido. UserId=${req.user.id} Path=${req.originalUrl}`
+  );
   next();
 }
 
@@ -83,8 +97,10 @@ function adminRequired(req, res, next) {
 app.get("/healthz", async (req, res) => {
   try {
     await pool.query("SELECT 1");
+    logger.info("Healthcheck OK (DB responde)");
     res.send("ok");
   } catch (err) {
+    logger.error("Healthcheck DB error: " + err.message);
     res.status(500).send("db_error");
   }
 });
@@ -102,7 +118,14 @@ app.post("/api/register", async (req, res) => {
   try {
     const { nombre, correo, password, sexo, edad, peso_kg } = req.body;
 
+    logger.info(
+      `POST /api/register intento de registro correo=${correo || "N/A"}`
+    );
+
     if (!nombre || !correo || !password) {
+      logger.warn(
+        "Registro inválido: faltan campos obligatorios (nombre/correo/password)"
+      );
       return res
         .status(400)
         .json({ error: "nombre, correo y password son obligatorios" });
@@ -131,6 +154,10 @@ app.post("/api/register", async (req, res) => {
     const { rows } = await pool.query(q, vals);
     const user = rows[0];
 
+    logger.info(
+      `Usuario registrado correctamente id=${user.id} correo=${user.correo}`
+    );
+
     const token = signToken(user);
 
     // Guarda cookie httpOnly
@@ -147,8 +174,12 @@ app.post("/api/register", async (req, res) => {
     });
   } catch (err) {
     if (err.code === "23505") {
+      logger.warn(
+        `Intento de registro con correo duplicado correo=${req.body.correo}`
+      );
       return res.status(409).json({ error: "El correo ya está registrado" });
     }
+    logger.error("Error al crear usuario: " + err.message);
     return res.status(500).json({ error: "Error al crear usuario" });
   }
 });
@@ -160,6 +191,8 @@ app.post("/api/login", async (req, res) => {
   try {
     const { correo, password } = req.body;
 
+    logger.info(`POST /api/login intento de login correo=${correo || "N/A"}`);
+
     const { rows } = await pool.query(
       `SELECT id, nombre, correo, password, sexo, edad, peso_kg, meta_diaria_ml, created_at, rol
        FROM usuarios
@@ -169,10 +202,20 @@ app.post("/api/login", async (req, res) => {
 
     const user = rows[0];
 
-    if (!user) return res.status(401).json({ error: "Credenciales inválidas" });
+    if (!user) {
+      logger.warn(
+        `Login fallido: usuario no encontrado correo=${correo || "N/A"}`
+      );
+      return res.status(401).json({ error: "Credenciales inválidas" });
+    }
 
     const ok = await argon2.verify(user.password, password);
-    if (!ok) return res.status(401).json({ error: "Credenciales inválidas" });
+    if (!ok) {
+      logger.warn(
+        `Login fallido: password incorrecto para correo=${correo || "N/A"}`
+      );
+      return res.status(401).json({ error: "Credenciales inválidas" });
+    }
 
     const token = signToken(user);
     const { password: _omit, ...publicUser } = user;
@@ -184,11 +227,16 @@ app.post("/api/login", async (req, res) => {
       maxAge: 1000 * 60 * 60 * 24 * 7,
     });
 
+    logger.info(
+      `Login exitoso id=${publicUser.id} correo=${publicUser.correo} rol=${publicUser.rol}`
+    );
+
     return res.json({
       message: "Inicio de sesión exitoso",
       user: publicUser,
     });
   } catch (err) {
+    logger.error("Error en inicio de sesión: " + err.message);
     return res.status(500).json({ error: "Error en inicio de sesión" });
   }
 });
@@ -197,6 +245,11 @@ app.post("/api/login", async (req, res) => {
 //  LOGOUT
 // =========================
 app.post("/api/logout", (req, res) => {
+  logger.info(
+    `POST /api/logout solicitado. Cookie presente=${Boolean(
+      req.cookies.sessionToken
+    )}`
+  );
   res.clearCookie("sessionToken");
   res.json({ message: "Sesión cerrada" });
 });
@@ -211,6 +264,10 @@ app.get("/api/admin/users", authRequired, adminRequired, async (req, res) => {
     const q = (req.query.q || "").trim();
     const limit = Math.min(parseInt(req.query.limit || "20"), 100);
     const offset = parseInt(req.query.offset || "0");
+
+    logger.info(
+      `GET /api/admin/users q="${q}" limit=${limit} offset=${offset}`
+    );
 
     const where = q
       ? `WHERE LOWER(nombre) LIKE LOWER($1) OR LOWER(correo) LIKE LOWER($1)`
@@ -230,8 +287,13 @@ app.get("/api/admin/users", authRequired, adminRequired, async (req, res) => {
       params
     );
 
+    logger.info(
+      `GET /api/admin/users OK total=${total.rows[0].total} devueltos=${items.rows.length}`
+    );
+
     res.json({ total: total.rows[0].total, items: items.rows });
   } catch (err) {
+    logger.error("Error listando usuarios: " + err.message);
     res.status(500).json({ error: "Error listando usuarios" });
   }
 });
@@ -243,6 +305,7 @@ app.get(
   adminRequired,
   async (_req, res) => {
     try {
+      logger.info("GET /api/admin/users/stats solicitado");
       const { rows } = await pool.query(`
         SELECT
           COUNT(*)::int AS total_users,
@@ -250,8 +313,12 @@ app.get(
           ROUND(AVG(meta_diaria_ml)::numeric, 0) AS avg_meta_diaria_ml
         FROM usuarios;
       `);
+      logger.info(
+        `Stats usuarios: total_users=${rows[0].total_users} avg_peso_kg=${rows[0].avg_peso_kg} avg_meta_diaria_ml=${rows[0].avg_meta_diaria_ml}`
+      );
       res.json(rows[0]);
     } catch (err) {
+      logger.error("Error obteniendo stats: " + err.message);
       res.status(500).json({ error: "Error obteniendo stats" });
     }
   }
@@ -264,16 +331,25 @@ app.get(
   adminRequired,
   async (req, res) => {
     try {
+      const id = req.params.id;
+      logger.info(`GET /api/admin/users/${id} solicitado`);
+
       const { rows } = await pool.query(
         `SELECT id, nombre, correo, sexo, edad, peso_kg, meta_diaria_ml, created_at, rol
          FROM usuarios WHERE id = $1`,
-        [req.params.id]
+        [id]
       );
-      if (rows.length === 0)
+      if (rows.length === 0) {
+        logger.warn(`GET /api/admin/users/${id} no encontrado`);
         return res.status(404).json({ error: "No encontrado" });
+      }
 
+      logger.info(`GET /api/admin/users/${id} OK`);
       res.json(rows[0]);
     } catch (err) {
+      logger.error(
+        `Error obteniendo usuario id=${req.params.id}: ${err.message}`
+      );
       res.status(500).json({ error: "Error obteniendo usuario" });
     }
   }
@@ -289,12 +365,18 @@ app.patch(
       const id = req.params.id;
       const { nombre, correo, password, sexo, edad, peso_kg } = req.body;
 
+      logger.info(
+        `PATCH /api/admin/users/${id} payload={nombre:${nombre !== undefined}, correo:${correo !== undefined}, password:${password !== undefined}, sexo:${sexo !== undefined}, edad:${edad !== undefined}, peso_kg:${peso_kg !== undefined}}`
+      );
+
       const { rows: curRows } = await pool.query(
         "SELECT sexo, edad, peso_kg FROM usuarios WHERE id = $1",
         [id]
       );
-      if (curRows.length === 0)
+      if (curRows.length === 0) {
+        logger.warn(`PATCH /api/admin/users/${id} no encontrado`);
         return res.status(404).json({ error: "No encontrado" });
+      }
 
       const cur = curRows[0];
       const newSexo = sexo ?? cur.sexo;
@@ -340,6 +422,9 @@ app.patch(
       }
 
       if (fields.length === 0) {
+        logger.info(
+          `PATCH /api/admin/users/${id} sin cambios en campos, devolviendo estado actual`
+        );
         const { rows } = await pool.query(
           `SELECT id, nombre, correo, sexo, edad, peso_kg, meta_diaria_ml, created_at, rol
            FROM usuarios WHERE id = $1`,
@@ -358,11 +443,19 @@ app.patch(
       `;
       const { rows } = await pool.query(sql, vals);
 
+      logger.info(`PATCH /api/admin/users/${id} actualizado correctamente`);
+
       res.json(rows[0]);
     } catch (err) {
       if (err.code === "23505") {
+        logger.warn(
+          `PATCH /api/admin/users/${req.params.id} correo duplicado`
+        );
         return res.status(409).json({ error: "Correo ya registrado" });
       }
+      logger.error(
+        `Error actualizando usuario id=${req.params.id}: ${err.message}`
+      );
       res.status(500).json({ error: "Error actualizando usuario" });
     }
   }
@@ -376,6 +469,12 @@ app.delete(
   async (req, res) => {
     try {
       const { ids } = req.body;
+
+      logger.info(
+        `DELETE /api/admin/users/bulk-delete solicitado ids=${JSON.stringify(
+          ids
+        )}`
+      );
 
       if (!Array.isArray(ids) || ids.length === 0)
         return res
@@ -396,8 +495,15 @@ app.delete(
         [parsed]
       );
 
+      logger.info(
+        `DELETE /api/admin/users/bulk-delete OK eliminados=${rows
+          .map((r) => r.id)
+          .join(",")}`
+      );
+
       res.json({ deleted: rows.map((r) => r.id) });
     } catch (err) {
+      logger.error("Error al eliminar usuarios: " + err.message);
       res.status(500).json({ error: "Error al eliminar usuarios" });
     }
   }
@@ -412,15 +518,23 @@ app.delete(
     try {
       const id = req.params.id;
 
+      logger.info(`DELETE /api/admin/users/${id} solicitado`);
+
       const r = await pool.query("DELETE FROM usuarios WHERE id = $1", [
         Number(id),
       ]);
 
-      if (r.rowCount === 0)
+      if (r.rowCount === 0) {
+        logger.warn(`DELETE /api/admin/users/${id} no encontrado`);
         return res.status(404).json({ error: "No encontrado" });
+      }
 
+      logger.info(`DELETE /api/admin/users/${id} eliminado OK`);
       res.status(204).send();
     } catch (err) {
+      logger.error(
+        `Error eliminando usuario id=${req.params.id}: ${err.message}`
+      );
       res.status(500).json({ error: "Error eliminando usuario" });
     }
   }
@@ -432,5 +546,6 @@ module.exports = { app, pool, calcularMetaDiariaMl };
 if (require.main === module) {
   app.listen(port, () => {
     console.log(`API corriendo en http://localhost:${port}`);
+    logger.info(`Servidor iniciado en puerto ${port}`);
   });
 }

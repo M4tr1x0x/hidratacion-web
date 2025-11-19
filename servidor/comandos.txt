@@ -2,4 +2,5 @@ despliegue: docker compose up -d --build
 pruebas unitarias: docker compose exec api npm test
 obtener logs: docker compose exec api cat app.log
 acceder a la db: docker exec -it postgres_db psql -U Alejandro -d hidratacion
+obtener datos: SELECT id, nombre, correo, rol FROM usuarios;
 escanear: snyk test
